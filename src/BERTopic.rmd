@@ -1,0 +1,182 @@
+---
+title: "BERTopic"
+author: "Chase Dawson"
+date: "4/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(textstem)
+library(wordcloud)
+library(ggplot2)
+library(ggraph)
+library(igraph)
+```
+
+```{r, }
+s144_pos <- read.csv(here::here("data", "s144_pos_topics.csv"))
+s144_neg <- read.csv(here::here("data", "s144_neg_topics.csv"))
+s144_topics <- rbind(s144_neg, s144_pos)
+```
+
+```{r}
+# proportion breakdown of toics by sentiment
+topic_counts <- s144_topics %>%
+  group_by(sentiment, topic) %>%
+  count()
+
+pos_topics <- topic_counts %>%
+  filter(sentiment == "POSITIVE") %>%
+  arrange(desc(topic))
+
+pos_topics <- pos_topics %>%
+  mutate(topic = as.character(topic)) %>%
+  mutate(prop = n / sum(pos_topics$n) * 100) 
+pos_topics$cumsum <- cumsum(pos_topics$prop)
+
+pos_topics <- pos_topics %>%
+  mutate(ypos = cumsum - 0.5 * prop)
+
+# positive topics colors palette
+pos_pal = brewer.pal(7, "Set2")
+
+ggplot(pos_topics, aes(x="", y=prop, fill=topic)) + 
+    geom_bar(stat="identity", width=1, color="white") + 
+    coord_polar("y", start = 0) + 
+    labs(title="Topic Distribution for Positive Sentiment S144 Responses") + 
+    theme_void() + 
+    theme(legend.position = 'none') + 
+    geom_text(aes(y = ypos, label = topic), color = "black", size = 6) + 
+    scale_fill_manual(values = pos_pal)
+```
+
+
+# Topic Wordclouds
+
+```{r}
+pos_topic_word_counts <- s144_topics %>%
+  filter(sentiment == "POSITIVE") %>%
+  unnest_tokens(word, q85) %>%
+  filter(!word %in% stop_words$word) %>%
+  mutate(lemma = lemmatize_words(word)) %>%
+  group_by(topic, lemma) %>%
+  count()
+
+topics <- unique(pos_topic_word_counts$topic)
+for (i in seq(length(topics))) {
+  pos_topic_word_counts %>%
+    filter(topic == topics[i]) %>%
+    with(wordcloud(lemma, n, random.order = FALSE, max.words = 50, colors = c(pos_pal[i])))
+}
+``` 
+
+```{r}
+word_counts <- read.csv(here::here("data", "s144_sentiment_topic_word_counts.csv"))
+cooc <- read.csv(here::here("data", "s144_sentiment_topic_cooc.csv"))
+cor <- read.csv(here::here("data", "s144_sentiment_topic_cor.csv"))
+
+to_join <- word_counts %>%
+  select(c(lemma, n, topic, sentiment))
+
+cor_wc <- dplyr::left_join(cor,  to_join, by = c("topic" = "topic", "sentiment" = "sentiment", "item1" = "lemma"))
+cor_wc <- cor_wc %>%
+  rename(item1_count = n)
+cor_wc <- dplyr::left_join(cor_wc,  to_join, by = c("topic" = "topic", "sentiment" = "sentiment", "item2" = "lemma"))
+cor_wc <- cor_wc %>%
+  rename(item2_count = n)
+
+plot_cor <- function(sent, t, corr, item_count, color_) {
+  set.seed(2017)
+  data <- cor_wc %>%
+    filter(sentiment == sent) %>%
+    filter(topic == t) %>%
+    filter(correlation >+ corr) %>%
+    filter(item1_count >= item_count & item2_count >= item_count) 
+  
+  # create graph
+  graph <- data %>%
+    select(item1, item2, correlation) %>%
+    graph_from_data_frame()
+  
+  # add vertex size attribute
+  vertices <- V(graph)$name
+  tmp <- data %>%
+    select(item1, item1_count) %>%
+    filter(item1 %in% vertices)
+  vertex_size <- tmp[match(vertices, tmp$item1),]$item1_count
+  graph <- graph %>%
+    set_vertex_attr("word_count", value = vertex_size)
+  
+  # plot graph
+  plot <- graph %>%
+    ggraph(layout = "fr") +
+    geom_edge_link(aes(edge_alpha = correlation), show.legend = FALSE) +
+    geom_node_point(color = color_, aes(size = vertex_size)) +
+    geom_node_text(aes(label = name), repel = TRUE) +
+    theme_void() 
+  return(plot)
+}
+```
+
+```{r}
+plot_cor("POSITIVE", -1, 0.25, 10, pos_pal[1])
+```
+```{r}
+plot_cor("POSITIVE", 0, 0.25, 10, pos_pal[2])
+```
+```{r}
+plot_cor("POSITIVE", 1, 0.25, 5, pos_pal[3])
+```
+```{r}
+plot_cor("POSITIVE", 2, 0.25, 5, pos_pal[4])
+```
+
+```{r}
+plot_cor("POSITIVE", 3, 0.25, 10, pos_pal[5])
+```
+
+```{r}
+plot_cor("POSITIVE", 4, 0.25, 5, pos_pal[6])
+```
+
+```{r}
+plot_cor("POSITIVE", 5, 0.25, 5, pos_pal[7])
+```
+
+```{r, echo = FALSE}
+neg_topics <- topic_counts %>%
+  filter(sentiment == "NEGATIVE") %>%
+  arrange(desc(topic))
+
+neg_topics <- neg_topics %>%
+  mutate(topic = as.character(topic)) %>%
+  mutate(prop = n / sum(neg_topics$n) * 100) 
+neg_topics$cumsum <- cumsum(neg_topics$prop)
+
+neg_topics$ypos <- c(700, 1715)
+neg_pal <- brewer.pal(2, "Set2")
+
+ggplot(neg_topics, aes(x="", y=n, fill=topic)) + 
+    geom_bar(stat="identity", width=1, color="white") + 
+    coord_polar("y", start = 0) + 
+    labs(title="Topic Distribution for Negative Sentiment S144 Responses") + 
+    theme_void() + 
+    theme(legend.position = 'none') + 
+    geom_text(aes(y = ypos, label = topic), color = "black", size = 6) + 
+    scale_fill_manual(values = neg_pal)
+```
+
+```{r}
+plot_cor("NEGATIVE", 0, 0.25, 1, neg_pal[1])
+```
+
+```{r}
+plot_cor("NEGATIVE", 1, 0.4, 10, neg_pal[2])
+```
